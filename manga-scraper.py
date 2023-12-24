@@ -77,48 +77,58 @@ def getChapterList(bs):
             result.append((title, upload_date, link))
     return result
 
-def writeBS(path, mode, data):
+def writeBS(path, mode, data, numEntries):
     if len(data) == 0:
         return
     with open(path, mode, newline='') as csv_file:
         writer = csv.writer(csv_file, delimiter='\t')
-        data.reverse()
-        for row in data:
-            writer.writerow([row[0], row[1], row[2]])
+        if numEntries == 2:   #Rewriting nickname_dict.csv
+            for row in data:
+                writer.writerow([row[0], row[1]])
+        elif numEntries == 3: #Writing chapters to disk
+            data.reverse()
+            for row in data:
+                writer.writerow([row[0], row[1], row[2]])
+        elif numEntries == 5: #Rewriting series_dict.csv
+            for row in data:
+                writer.writerow([row[0], row[1], row[2],row[3],row[4]])
 
-def track_series(series_info):
+def track_series(series_info, arrLen):
     # series_info -> (domain, series_prefix, series_identifier)
     domain = series_info[0]
     series_prefix = series_info[1]
     series_identifier = series_info[2]
-    
+    series_nickname = None
+    progress = "-1"
     bs = getSeriesPage(domain, series_prefix, series_identifier)
     if bs == None:
         return None
     
     try:
         series_title = bs.find('h1').get_text()
-        print(series_title)
+        print(f'{series_title} is being added...')
     except:
         print("Web page found is either not a series page, or has a different page structure...")
         return None
-
-    while True:
-        series_nickname = input("Enter a nickname for the series\n")
-        if not series_nickname:
-            continue
-        if series_nickname and nickname_dict.get(series_nickname) is None:
-            break
-        else:
-            print("Nickname already used...\n")
-    progress = "-1"
-    track_progress = input("Do you want to track your progress? (y/n)\n")
-    if "y" in track_progress or "Y" in track_progress:
-        progress = input("Enter the chapter you are currently on. Ex: If the latest chapter you read was 'VOL.23 CHAPTER 68.2: THE S... ' you would enter: 68.2\n")
+    
+    if arrLen == 1:
+        while True:
+            series_nickname = input("Enter a nickname for the series\n")
+            if not series_nickname:
+                continue
+            if series_nickname and nickname_dict.get(series_nickname) is None:
+                break
+            else:
+                print("Nickname already used...\n")
+        progress = "-1"
+        track_progress = input("Do you want to track your progress? (y/n)\n")
+        if "y" in track_progress or "Y" in track_progress:
+            progress = input("Enter the chapter you are currently on. Ex: If the latest chapter you read was 'VOL.23 CHAPTER 68.2: THE S... ' you would enter: 68.2\n")
 
     series_d_entry = f'{domain}--{series_identifier}'
     #Update dictionaries
-    nickname_dict[series_nickname] = series_d_entry
+    if series_nickname is not None:
+        nickname_dict[series_nickname] = series_d_entry
     ##Probably want to refine what series_dict stores in the future - reduce redundancy? possibly make a domain dictionary
     series_dict[series_d_entry] = (series_title, domain, series_prefix, series_identifier, progress)
     
@@ -127,14 +137,15 @@ def track_series(series_info):
         os.mkdir('./data')
 
     bs_list = getChapterList(bs)
-    writeBS(f'./data/{series_d_entry}.csv', 'w', bs_list)
+    writeBS(f'./data/{series_d_entry}.csv', 'w', bs_list, 3)
 
     with open("./data/series_info.csv",'a', newline = '') as csv_file:
         writer = csv.writer(csv_file, delimiter='\t')
         writer.writerow([series_title, domain, series_prefix, series_identifier, progress])
-    with open("./data/nickname_info.csv",'a', newline = '') as csv_file:
-        writer = csv.writer(csv_file, delimiter='\t')
-        writer.writerow([series_nickname, series_d_entry])
+    if series_nickname is not None:
+        with open("./data/nickname_info.csv",'a', newline = '') as csv_file:
+            writer = csv.writer(csv_file, delimiter='\t')
+            writer.writerow([series_nickname, series_d_entry])
     
     return None
     
@@ -144,10 +155,10 @@ def check_all():
     if len(series_dict) == 0:
         print("No series are being tracked.")
     for nickname in nickname_dict.keys():
-        check_series(nickname)
+        check_series(nickname, True)
         time.sleep(1)
     
-def check_series(nickname = None):
+def check_series(nickname = None, calledFromAll = False):
     #Check for new chapters, if any new chapters: update file, show list of new chapters and links to new chapters
     #Show number of chapters, unread chapters
     if len(series_dict) == 0:
@@ -186,11 +197,25 @@ def check_series(nickname = None):
         bs_list = bs_list[:difference]
         open_mode = 'a+'
     else:
-        print(f'Some chapters were deleted on the website.')
+        print(f'Some chapters were deleted on the website... Refreshing list... {len(bs_list)} chapters.')
         open_mode = 'w+'
     
     if difference:
-        writeBS(series_location, open_mode, bs_list)
+        writeBS(series_location, open_mode, bs_list, 3)
+    '''
+    if not calledFromAll:
+        
+        while True:
+            inp = input('Update nickname/progress? Enter nothing to continue.')
+            match inp:
+                case 'nickname':
+                    nickname = input('Enter new nickname for the series, nothing to keep current nickname')
+                    if nickname:
+                        nickname_dict[nickname] = #TODO add support to get series by series title, then return to this.
+                case 'progress':
+                case _:
+                    break
+    '''
     
 def add_series():
     #In a loop
@@ -199,16 +224,20 @@ def add_series():
         #Add series if not present
         #Set how many chapters user has read(tracking)
     while True:
-        url = input('Submit the link to the series to track. Enter nothing to return to the main menu.\n')
-        series = parse_url(url)
-        if series == None:
+        urls = input('Submit the links of the series to track, separated by a space. Enter nothing to return to the main menu.\n').split(' ')
+        urls = [u for u in urls if u]
+        if not urls:
             break
-        elif len(series) == 1:
-            print(series[0])
-        elif series and f'{series[0]}--{series[2]}' not in series_dict:
-            track_series(series)        
-        else:
-            print("Series already being tracked.\n")
+        for url in urls:
+            series = parse_url(url)
+            if series == None:
+                break
+            elif len(series) == 1:
+                print(series[0])
+            elif series and f'{series[0]}--{series[2]}' not in series_dict:
+                track_series(series, len(urls))        
+            else:
+                print(f'Series already being tracked - {series}\n')
 
 def list_series():
     #Show Title of every list found, Total # of chapters, #of chapters read|unread
@@ -216,15 +245,94 @@ def list_series():
         print("No series are being tracked.")
         return
     
-    nicknames = sorted(nickname_dict.keys())
-    print("Nickname | Series Title\n")
-    for nickname in nicknames:
-        title = series_dict[nickname_dict[nickname]][0]
-        print(f'{nickname} | {title}\n')
+    nick_vals = nickname_dict.values()
+    series_only = []
+    nick_pairs = []
+    for series in series_dict.values():
+        possible_value = f'{series[1]}--{series[3]}'
+        if possible_value not in nick_vals:
+            series_only.append(series[0])
+        else:
+            for key in nickname_dict:
+                if nickname_dict[key] == possible_value:
+                    nick_pairs.append((key,series[0]))
 
-def delete_series():
-    #stop tracking series from check_all, ask to confirm deletion from disk
-    print("To be implemented in the future\n")
+    series_only = sorted(series_only)
+    nick_pairs = sorted(nick_pairs)
+
+    if len(nick_pairs):
+        print("Nickname | Series Title\n")
+    for pair in nick_pairs:
+        print(f'{pair[0]} | {pair[1]}\n')
+    
+    if len(nick_pairs):
+        print('\n')
+    print('Series without nicknames\n')
+    for series in series_only:
+        print(f'{series}\n')
+
+def delete_series(name):
+    if not name:
+        return None
+    series_len = len(series_dict)
+    nick_len = len(nickname_dict)
+
+    series_key = None
+    if nickname_dict.get(name) != None:
+        series_key = nickname_dict[name]
+        del series_dict[nickname_dict[name]]
+        del nickname_dict[name]
+    else:
+        #Find series_dict key from name
+        for series in series_dict.values():
+            if series[0] == name:
+                series_key = series[1] + "--" + series[3]
+                break
+        
+        if series_key != None:
+            #Find series nickname from series_key
+            nick_key = None
+            for key in nickname_dict.keys():
+                if nickname_dict[key] == series_key:
+                    nick_key = nickname_dict[key]
+                    break
+            del series_dict[series_key]
+            if nick_key:
+                del nickname_dict[nick_key]
+        else:
+            print(f'No series found for: {name}')
+            return
+
+    if series_key is not None and os.path.exists(f'./data/{series_key}.csv'):
+        os.remove(f'./data/{series_key}.csv')
+
+    if series_len > len(series_dict):
+        if len(series_dict):
+            writeBS('./data/series_info.csv','w+', series_dict, 5)
+        elif os.path.exists('./data/series_info.csv'):
+            os.remove(f'./data/series_info.csv')
+    if nick_len > len(nickname_dict):
+        if len(nickname_dict):
+            writeBS('./data/nickname_info.csv','w+', nickname_dict, 2)
+        elif os.path.exists('./data/nickname_info.csv'):
+            os.remove(f'./data/nickname_info.csv')
+
+def delete_series_call():
+    #Stop tracking a series
+    #series_dict entry: (series_title, domain, series_prefix, series_identifier, progress)
+    if len(series_dict) == 0:
+        print("No series are being tracked.")
+        return
+
+    while len(series_dict):
+        series = input('Enter the series nickname or title you wish to delete, encased in double quotation marks. Type "quit" to return to the main menu.\n')
+        if series == 'quit':
+            return
+        series_split = re.findall('"[^"]*"', series)
+        counter = 0
+        for s in series_split:
+            delete_series(s[1:-1])
+        
 
 def load_dictionary(csv_file_name):
     csv_file_name = "./data/" + csv_file_name
@@ -240,35 +348,29 @@ def load_dictionary(csv_file_name):
             elif csv_file_name == "./data/nickname_info.csv":
                 for row in csv_reader:
                     nickname_dict[row[0]] = row[1]
-    
+
+#Main Program
 load_dictionary("series_info.csv")
 load_dictionary("nickname_info.csv")
-
+dashes = '\n--------------------------------------------------\n'
 while True:
     user_input = input('Choose an option:\n1: Check every series for new chapters\n2: See all chapters in a particular series\n3: Track a new series\n4: List all series\ndelete: Delete a series\nquit to exit\n\n')
-    
+    if re.match('^[1234]|delete|quit$', user_input):
+        print(dashes)
     match user_input:
-        case '1':
-            print('\n--------------------------------------------------\n')
+        case '1':    
             check_all()
-            print('\n--------------------------------------------------\n')
         case '2':
-            print('\n--------------------------------------------------\n')
             check_series()
-            print('\n--------------------------------------------------\n')
         case '3':
-            print('\n--------------------------------------------------\n')
             add_series()
-            print('\n--------------------------------------------------\n')
         case '4':
-            print('\n--------------------------------------------------\n')
             list_series()
-            print('\n--------------------------------------------------\n')
         case 'delete':
-            print('\n--------------------------------------------------\n')
-            delete_series()
-            print('\n--------------------------------------------------\n')
+            delete_series_call()
         case 'quit':
             break
         case _:
             print('')
+    if re.match('^[1234]|delete|quit$', user_input):
+        print(dashes)
